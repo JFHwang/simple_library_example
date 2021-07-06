@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(img_lib STATIC lib.c)
 target_include_directories(img_lib PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(img_lib PUBLIC /home/john/programs/rlbox/rlbox_sandboxing_api/code/include) 
 
 add_executable(img_app main.cpp)
 target_link_libraries(img_app img_lib)
