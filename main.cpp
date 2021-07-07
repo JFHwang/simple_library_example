@@ -1,12 +1,16 @@
 #define RLBOX_SINGLE_THREADED_INVOCATIONS
 #define RLBOX_USE_STATIC_CALLS() rlbox_noop_sandbox_lookup_symbol
 
+
 #include "lib.h"
 #include <string.h>
 #include <stdlib.h>
 #include <iostream>
 #include "rlbox.hpp"
 #include "rlbox_noop_sandbox.hpp"
+
+#include "lib_structs_for_cpp_api.h"
+rlbox_load_structs_from_library(lib); // NOLINT
 
 using namespace rlbox;
 
@@ -45,52 +49,44 @@ int main(int argc, char const *argv[])
     // So we will just assume that input_stream buffer has bytes we want to parse
 
     auto tainted_input_stream = sandbox.malloc_in_sandbox<char>(100);
-    auto taintedHeader = sandbox.invoke_sandbox_function(parse_image_header, tainted_input_stream);
-    ImageHeader * header = (ImageHeader *)taintedHeader.copy_and_verify_address([](std::uintptr_t ptr) { return ptr; });
+    auto tainted_header = sandbox.invoke_sandbox_function(parse_image_header, tainted_input_stream);
 
-    if (header->status_code != STATUS_SUCCEEDED) {
-        std::cerr << "Error: " << PROGRAM_ERR_MSG[header->status_code] << "\n";
+    unsigned int header_status_code = tainted_header->status_code.copy_and_verify([](unsigned int status_code) { return status_code; });
+
+    if (header_status_code != STATUS_SUCCEEDED) {
+        std::cerr << "Error: " << PROGRAM_ERR_MSG[header_status_code] << "\n";
         return 1;
     }
+    unsigned int header_height = tainted_header->height.copy_and_verify([](unsigned int height) { return height; });
+    unsigned int header_width = tainted_header->width.copy_and_verify([](unsigned int width) { return width; });
 
-    char* output_stream = new char[header->height * header->width];
+    char* output_stream = new char[header_height * header_width];
     if (!output_stream) {
         std::cerr << "Error: " << PROGRAM_ERR_MSG[MEMORY_ALLOC_MSG] << "\n";
         return 1;
     }
 
-    auto tainted_output_stream = sandbox.malloc_in_sandbox<char>(header->height * header->width);
+    auto tainted_output_stream = sandbox.malloc_in_sandbox<char>(header_height * header_width);
     auto progress_cb = sandbox.register_callback(image_parsing_progress);
-    sandbox.invoke_sandbox_function(parse_image_body, tainted_input_stream, taintedHeader, progress_cb, tainted_output_stream);
-
-    /*
-    // Copy application's header structure into sandbox. In case of change
-    auto taintedHeader2 = sandbox.malloc_in_sandbox<ImageHeader>();
-    memcpy(taintedHeader2.unverified_safe_pointer_because(sizeof(ImageHeader), "tmp"), header, sizeof(ImageHeader));
-    sandbox.invoke_sandbox_function(parse_image_body, tainted_input_stream, taintedHeader2, progress_cb, tainted_output_stream);
-    */
-
+    sandbox.invoke_sandbox_function(parse_image_body, tainted_input_stream, tainted_header, progress_cb, tainted_output_stream);
 
     // Verify contents of tainted_output_stream and copy to output_stream
-    memcpy(	output_stream, 
-		tainted_output_stream.copy_and_verify_string([](std::unique_ptr<char[]> val) {
-                    return val.strlen(val.get()) < header->height * header->weight ? std::move(val).get() : nullptr;
-		}), 
-		header->height * header->width);
+    memcpy(output_stream, 
+           tainted_output_stream.copy_and_verify_range([](std::unique_ptr<char[]> val) { return std::move(val); }, header_height * header_width).get(),
+	   header_height * header_width);
     
     // Now verify tainted output stream and copy data over to local version
     // parse_image_body(input_stream, header, image_parsing_progress, output_stream);
 
     std::cout << "Image pixels: ";
-    for (unsigned int i = 0; i < header->height; i++) {
-        for (unsigned int j = 0; j < header->width; j++) {
-            unsigned int index = i * header->width + j;
+    for (unsigned int i = 0; i < header_height; i++) {
+        for (unsigned int j = 0; j < header_width; j++) {
+            unsigned int index = i * header_width + j;
             std::cout << (unsigned int) output_stream[index] << " ";
         }
     }
     std::cout << "\n";
 
-    free(header);
     delete input_stream;
     delete output_stream;
     sandbox.destroy_sandbox();
